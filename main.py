@@ -71,6 +71,7 @@ def GetTroveProcesses():
             yield Child.pid
 
 def GetExtractedFiles(Directory):
+    """A generator that outputs all files in a diretory"""
     for Thing in os.listdir(Directory):
         PathThing = os.path.join(Directory, Thing)
         if os.path.isdir(PathThing):
@@ -79,13 +80,14 @@ def GetExtractedFiles(Directory):
         else:
             yield PathThing
 
-def CutTroveDirectory(Path):
-    return Path.replace(TroveDirectory+"\\", "")
+def CutDirectory(Path, CutPath):
+    """This allows me to keep trove's file structure"""
+    return Path.replace(CutPath+"\\", "")
 
 # Changes
 async def SetHashFile(File, Progress):
     """Helps with first file hash log"""
-    FilePathName = File.replace(ExtractedDirectory+"\\", "").lower()
+    FilePathName = CutDirectory(File, ExtractedDirectory)
     if HashCache["Files"].get(FilePathName) is None:
         while True:
             try:
@@ -127,7 +129,7 @@ def CheckExtractedFileHashes():
     with Progress(total=len(ExtractedFiles)) as HashChecking:
         for File in ExtractedFiles:
             FileHash = GetHash(File)
-            FileLocation = File.replace(ExtractedDirectory+"\\", "")
+            FileLocation = CutDirectory(File, ExtractedDirectory)
             FileName = os.path.basename(FileLocation)
             FilePath = os.path.dirname(FileLocation)
             if FilePath in ExtractedArchivePaths:
@@ -147,31 +149,32 @@ def ExtractArchive(Archive, Output):
     StartedProcesses.append(CMDProcess.pid)
 
 async def ExtractArchiveFolder(ArchiveFolder):
+    """This extracts all archives in a folder with an Index if any were changed"""
     Extracted = False
     for Archive in FindTroveArchiveFiles(ArchiveFolder):
         # Reduce size of Hash Database by cutting down key names
-        ArchivePath = CutTroveDirectory(Archive)
+        ArchivePath = CutDirectory(Archive, TroveDirectory)
         ArchiveHash = GetHash(Archive)
         if (CachedHash := HashCache["Archives"].get(ArchivePath)) is None or (CachedHash != ArchiveHash):
             # Update hash of the file's content
             HashCache["Archives"][ArchivePath] = ArchiveHash
             if not Extracted:
-                ArchiveFolderPath = CutTroveDirectory(ArchiveFolder)
+                ArchiveFolderPath = CutDirectory(ArchiveFolder, TroveDirectory)
                 Output = os.path.join(ExtractedDirectory, ArchiveFolderPath)
                 # Make sure to not blast windows with too many Trove.exe processes
-                while len(list(GetTroveProcesses())) >= 50:
-                    await sleep(3)
+                while len(list(GetTroveProcesses())) >= 100:
+                    await sleep(2)
                 ExtractArchive(ArchiveFolder, Output)
-                await sleep(0.05)
                 ExtractedArchivePaths.append(ArchiveFolderPath)
                 Extracted = True
 
 async def ExtractArchives():
+    """Setup files for extraction through the use of asynchronous methods to speed up process"""
     print("Extracting changed archives...")
     with Progress() as ExtractionProgress:
         ExtractionProgress.update_to(0, total=len(ArchiveFolders))
-        for i, ArchiveFolder in enumerate(ArchiveFolders):
-            ExtractionProgress.update_to(1, desc=f"{CutTroveDirectory(ArchiveFolder):<64}")
+        for ArchiveFolder in ArchiveFolders:
+            ExtractionProgress.update_to(1, desc=f"{CutDirectory(ArchiveFolder, TroveDirectory):<64}")
             # Extract Archives if one is changed
             await ExtractArchiveFolder(ArchiveFolder)
     print("Waiting Trove processes to finish extracting the files...")
@@ -200,6 +203,7 @@ if not SanityCheck():
     quit()
 
 async def main():
+    """Runs the program itself as an asynchronous method"""
     # Ensure user doesn't lose previous hash data
     HashBackupFile = None
     if HashCache.get("Archives") or HashCache.get("Files"):
