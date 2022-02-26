@@ -171,10 +171,9 @@ async def ExtractArchives():
     with Progress() as ExtractionProgress:
         ExtractionProgress.update_to(0, total=len(ArchiveFolders))
         for i, ArchiveFolder in enumerate(ArchiveFolders):
-            ExtractionProgress.update_to(0, desc=f"{CutTroveDirectory(ArchiveFolder):<64}")
+            ExtractionProgress.update_to(1, desc=f"{CutTroveDirectory(ArchiveFolder):<64}")
             # Extract Archives if one is changed
             await ExtractArchiveFolder(ArchiveFolder)
-            ExtractionProgress.update_to(1)
     print("Waiting Trove processes to finish extracting the files...")
     while True:
         _break = True
@@ -202,6 +201,7 @@ if not SanityCheck():
 
 async def main():
     # Ensure user doesn't lose previous hash data
+    HashBackupFile = None
     if HashCache.get("Archives") or HashCache.get("Files"):
         HashBackupFile = f"EAEHashLogBackup_{datetime.now().strftime('%Y-%m-%d_%H.%M')}.json"
         SaveHashes(TroveDirectory, HashCacheBackup, HashBackupFile)
@@ -222,6 +222,9 @@ async def main():
         else:
             await GetExtractedFileHashes()
             print("Current file state recorded for future change logging.")
-    os.system("PAUSE")
+    # Ensure directory doesn't get filled with backup hash logs
+    if HashBackupFile:
+        os.remove(os.path.join(TroveDirectory, HashBackupFile))
 
 run(main())
+os.system("PAUSE")
