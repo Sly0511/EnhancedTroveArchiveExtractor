@@ -1,5 +1,5 @@
 import os
-from subprocess import Popen
+import subprocess
 import sys
 from asyncio import create_task, run, sleep
 from datetime import datetime
@@ -30,6 +30,7 @@ TroveEXE = os.path.join(TroveDirectory, "Trove.exe")
 #Manifest = os.path.join(TroveDirectory, "manifest.txt")
 ExtractedDirectory = os.path.join(TroveDirectory, "Extracted")
 ChangedDirectory = os.path.join(TroveDirectory, "Changed")
+PreviewDirectory = os.path.join(TroveDirectory, "Catalog")
 # Load previous logged hashes and create a backup for user cancellation
 HashCache = LoadHashes(TroveDirectory)
 HashCacheBackup = LoadHashes(TroveDirectory)
@@ -56,12 +57,14 @@ def SanityCheck():
     return True
 
 # Helper
-def PrepareDirectory(Changes=False):
+def PrepareDirectory(Changes=False, Previews=False):
     """Ensure necessary folders are created"""
     if not os.path.isdir(ExtractedDirectory):
         CreateDirectory(ExtractedDirectory, True)
     if not os.path.isdir(ChangedDirectory) and Changes:
         CreateDirectory(ChangedDirectory, True)
+    if not os.path.isdir(PreviewDirectory) and Previews:
+        CreateDirectory(PreviewDirectory, True)
 
 def GetTroveProcesses():
     """Get all subprocesses that were created by this script"""
@@ -120,7 +123,14 @@ async def GetExtractedFileHashes():
     SaveHashes(TroveDirectory, HashCache)
     print("Extracted files hashes were read.")
 
-def CheckExtractedFileHashes():
+def CatalogBlueprint(File):
+    """Open a Trove.exe subprocess to create blueprint previews"""
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags = subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0
+    CMDProcess = subprocess.run(f'{TroveEXE} -tool catalog -dimension 256 -filter \"{File}\"', startupinfo=info)
+
+def CheckExtractedFileHashes(Catalog=False):
     """Check new file hashes against stored ones"""
     ChangesDirectory = os.path.join(ChangedDirectory, datetime.now().strftime("%Y-%m-%d_%H.%M"))
     CreateDirectory(ChangesDirectory, True)
@@ -138,6 +148,8 @@ def CheckExtractedFileHashes():
                     CreateDirectory(os.path.join(ChangesDirectory, FilePath))
                     NewFile = os.path.join(ChangesDirectory, FileLocation)
                     copy(File, NewFile)
+                    if Catalog and FileName.endswith(".blueprint"):
+                        CatalogBlueprint(FileName)
             HashChecking.update_to(1, desc=f"{FileName:<64}")
         SaveHashes(TroveDirectory, HashCache)
     print(f"Changes logged into \"{ChangesDirectory}\"")
@@ -145,7 +157,7 @@ def CheckExtractedFileHashes():
 # Extraction
 def ExtractArchive(Archive, Output):
     """Open a Trove.exe subprocess to extract archives"""
-    CMDProcess = Popen(f'{TroveEXE} -tool extractarchive \"{Archive}\" \"{Output}\"')
+    CMDProcess = subprocess.Popen(f'{TroveEXE} -tool extractarchive \"{Archive}\" \"{Output}\"')
     StartedProcesses.append(CMDProcess.pid)
 
 async def ExtractArchiveFolder(ArchiveFolder):
@@ -211,7 +223,14 @@ async def main():
         SaveHashes(TroveDirectory, HashCacheBackup, HashBackupFile)
         print(f"Saved previous hashlog to `{HashBackupFile}`, you can change it's name to `EAEHashLog.log` to restore it if you cancel this script midway or it errors.")
     TrackChanges = input("Do you wish to have a separate directory with changes created for this version? Y | N\n").lower() in ["y", "yes"]
-    PrepareDirectory(TrackChanges)
+    CreatePreviews = False
+    if TrackChanges:
+        print("Do you want to create PNG previews of the changed blueprints?")
+        print(" - This process can be time and resource consuming")
+        print(" - This will not run if there's no changes tracked yet")
+        print(" - This will delete all files in `Catalog` diretory")
+        CreatePreviews = input().lower() in ["y", "yes"]
+    PrepareDirectory(TrackChanges, CreatePreviews)
     # Setup Hash logging for first run
     if TrackChanges:
         if not HashCache.get("Files"):
@@ -222,7 +241,7 @@ async def main():
     # Look for changes and move them to the assigned folder
     if TrackChanges:
         if HashCache.get("Files"):
-            CheckExtractedFileHashes()
+            CheckExtractedFileHashes(CreatePreviews)
         else:
             await GetExtractedFileHashes()
             print("Current file state recorded for future change logging.")
