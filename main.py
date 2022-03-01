@@ -128,7 +128,7 @@ def CatalogBlueprint(File):
     startupinfo = subprocess.STARTUPINFO()
     startupinfo.dwFlags = subprocess.STARTF_USESHOWWINDOW
     startupinfo.wShowWindow = 0
-    CMDProcess = subprocess.run(f'{TroveEXE} -tool catalog -dimension 256 -filter \"{File}\"', startupinfo=info)
+    subprocess.run(f'{TroveEXE} -tool catalog -dimension 256 -filter \"{File}\"', startupinfo=startupinfo)
 
 def CheckExtractedFileHashes(Catalog=False):
     """Check new file hashes against stored ones"""
@@ -142,7 +142,7 @@ def CheckExtractedFileHashes(Catalog=False):
             FileLocation = CutDirectory(File, ExtractedDirectory)
             FileName = os.path.basename(FileLocation)
             FilePath = os.path.dirname(FileLocation)
-            if FilePath in ExtractedArchivePaths:
+            if not ExtractedArchivePaths or FilePath in ExtractedArchivePaths:
                 if (OldHash := HashCache["Files"].get(FileLocation)) is None or FileHash != OldHash:
                     HashCache["Files"][FileLocation] = FileHash
                     CreateDirectory(os.path.join(ChangesDirectory, FilePath))
@@ -225,7 +225,7 @@ async def main():
     TrackChanges = input("Do you wish to have a separate directory with changes created for this version? Y | N\n").lower() in ["y", "yes"]
     CreatePreviews = False
     if TrackChanges:
-        print("Do you want to create PNG previews of the changed blueprints?")
+        print("Do you want to create PNG previews of the changed blueprints? Y | N")
         print(" - This process can be time and resource consuming")
         print(" - This will not run if there's no changes tracked yet")
         print(" - This will delete all files in `Catalog` diretory")
