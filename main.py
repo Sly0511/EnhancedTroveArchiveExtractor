@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import sys
 from asyncio import create_task, run, sleep
@@ -40,6 +41,8 @@ ArchiveFolders = list(FindTroveArchiveFolders(TroveDirectory))
 print(f"Found {len(ArchiveFolders)} Archive indexes.")
 # This is a cache to avoid checking for changes on all directories
 ExtractedArchivePaths = []
+CatalogRegex = r"(?:[a-z0-9]+)(?:_(?!ui)[a-z]{1,2})?(?:_[0-9]{1,3})?\.blueprint"
+CataloguedFiles = []
 
 def SanityCheck():
     """Make sure Trove.exe is in directory and setup Hash File Log"""
@@ -123,17 +126,25 @@ async def GetExtractedFileHashes():
     SaveHashes(TroveDirectory, HashCache)
     print("Extracted files hashes were read.")
 
-def CatalogBlueprint(File):
+def CatalogBlueprint(Directory, File):
     """Open a Trove.exe subprocess to create blueprint previews"""
-    startupinfo = subprocess.STARTUPINFO()
-    startupinfo.dwFlags = subprocess.STARTF_USESHOWWINDOW
-    startupinfo.wShowWindow = 0
-    subprocess.run(f'{TroveEXE} -tool catalog -dimension 256 -filter \"{File}\"', startupinfo=startupinfo)
+    if (CatalogSum := re.sub(CatalogRegex, "", File, 0, re.MULTILINE)) not in CataloguedFiles:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags = subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+        subprocess.run(
+            f'{TroveEXE} -tool catalog -dimension 256 -filter \"{CatalogSum}\" -dir \"{Directory}\"', 
+            startupinfo=startupinfo
+        )
+        CataloguedFiles.append(CatalogSum)
 
 def CheckExtractedFileHashes(Catalog=False):
     """Check new file hashes against stored ones"""
     ChangesDirectory = os.path.join(ChangedDirectory, datetime.now().strftime("%Y-%m-%d_%H.%M"))
     CreateDirectory(ChangesDirectory, True)
+    if Catalog:
+        CatalogsDirectory = os.path.join(ChangesDirectory, "catalog")
+        CreateDirectory(CatalogsDirectory, True)
     print("Indexing extracted files...")
     ExtractedFiles = list(GetExtractedFiles(ExtractedDirectory))
     with Progress(total=len(ExtractedFiles)) as HashChecking:
@@ -149,7 +160,7 @@ def CheckExtractedFileHashes(Catalog=False):
                     NewFile = os.path.join(ChangesDirectory, FileLocation)
                     copy(File, NewFile)
                     if Catalog and FileName.endswith(".blueprint"):
-                        CatalogBlueprint(FileName)
+                        CatalogBlueprint(CatalogsDirectory, FileName)
             HashChecking.update_to(1, desc=f"{FileName:<64}")
         SaveHashes(TroveDirectory, HashCache)
     print(f"Changes logged into \"{ChangesDirectory}\"")
@@ -228,7 +239,6 @@ async def main():
         print("Do you want to create PNG previews of the changed blueprints? Y | N")
         print(" - This process can be time and resource consuming")
         print(" - This will not run if there's no changes tracked yet")
-        print(" - This will delete all files in `Catalog` diretory")
         CreatePreviews = input().lower() in ["y", "yes"]
     PrepareDirectory(TrackChanges, CreatePreviews)
     # Setup Hash logging for first run
