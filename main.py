@@ -144,7 +144,7 @@ def CheckExtractedFileHashes(Catalog=False):
     if Catalog:
         CatalogsDirectory = os.path.join(ChangesDirectory, "catalog")
         CreateDirectory(CatalogsDirectory, True)
-        shutil.rmtree(CatalogsDirectory)
+        shutil.rmtree(CatalogsDirectory, ignore_errors=True)
     print("Indexing extracted files...")
     ExtractedFiles = list(GetExtractedFiles(ExtractedDirectory))
     with Progress(total=len(ExtractedFiles)) as HashChecking:
@@ -164,7 +164,7 @@ def CheckExtractedFileHashes(Catalog=False):
             HashChecking.update_to(1, desc=f"{FileName:<64}")
     OriginalCatalog = os.path.join(TroveDirectory, "catalog")
     shutil.copytree(OriginalCatalog, CatalogsDirectory, dirs_exist_ok=True)
-    shutil.rmtree(OriginalCatalog)
+    shutil.rmtree(OriginalCatalog, ignore_errors=True)
     print(f"Changes logged into \"{ChangesDirectory}\"")
 
 # Extraction
@@ -261,5 +261,8 @@ async def main():
     if HashBackupFile:
         os.remove(os.path.join(TroveDirectory, HashBackupFile))
 
-run(main())
+try:
+    run(main())
+except Exception as e:
+    print(f"An Error Occured\n{e}")
 os.system("PAUSE")
