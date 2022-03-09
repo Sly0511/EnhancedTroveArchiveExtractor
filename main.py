@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import subprocess
 import sys
 from asyncio import create_task, run, sleep
@@ -31,7 +32,6 @@ TroveEXE = os.path.join(TroveDirectory, "Trove.exe")
 #Manifest = os.path.join(TroveDirectory, "manifest.txt")
 ExtractedDirectory = os.path.join(TroveDirectory, "Extracted")
 ChangedDirectory = os.path.join(TroveDirectory, "Changed")
-PreviewDirectory = os.path.join(TroveDirectory, "Catalog")
 # Load previous logged hashes and create a backup for user cancellation
 HashCache = LoadHashes(TroveDirectory)
 HashCacheBackup = LoadHashes(TroveDirectory)
@@ -66,8 +66,6 @@ def PrepareDirectory(Changes=False, Previews=False):
         CreateDirectory(ExtractedDirectory, True)
     if not os.path.isdir(ChangedDirectory) and Changes:
         CreateDirectory(ChangedDirectory, True)
-    if not os.path.isdir(PreviewDirectory) and Previews:
-        CreateDirectory(PreviewDirectory, True)
 
 def GetTroveProcesses():
     """Get all subprocesses that were created by this script"""
@@ -123,28 +121,30 @@ async def GetExtractedFileHashes():
                 await sleep(0.5)
         while HashSaving.n != len(ExtractedFiles):
             await sleep(10)
-    SaveHashes(TroveDirectory, HashCache)
     print("Extracted files hashes were read.")
 
-def CatalogBlueprint(Directory, File):
+def CatalogBlueprint(File):
     """Open a Trove.exe subprocess to create blueprint previews"""
     if (CatalogSum := re.sub(CatalogRegex, "", File, 0, re.MULTILINE)) not in CataloguedFiles:
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags = subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = 0
+        command = f"{TroveEXE} -tool catalog -filter \"{CatalogSum}\" -dimension \"256\""# -dir \"{Directory}\""
         subprocess.run(
-            f'{TroveEXE} -tool catalog -dimension 256 -filter \"{CatalogSum}\" -dir \"{Directory}\"', 
+            command,
+            cwd=TroveDirectory,
             startupinfo=startupinfo
         )
         CataloguedFiles.append(CatalogSum)
 
 def CheckExtractedFileHashes(Catalog=False):
     """Check new file hashes against stored ones"""
-    ChangesDirectory = os.path.join(ChangedDirectory, datetime.now().strftime("%Y-%m-%d_%H.%M"))
+    ChangesDirectory = os.path.join(ChangedDirectory, datetime.now().strftime("%Y-%m-%d_%H-%M"))
     CreateDirectory(ChangesDirectory, True)
     if Catalog:
         CatalogsDirectory = os.path.join(ChangesDirectory, "catalog")
         CreateDirectory(CatalogsDirectory, True)
+        shutil.rmtree(CatalogsDirectory)
     print("Indexing extracted files...")
     ExtractedFiles = list(GetExtractedFiles(ExtractedDirectory))
     with Progress(total=len(ExtractedFiles)) as HashChecking:
@@ -160,9 +160,11 @@ def CheckExtractedFileHashes(Catalog=False):
                     NewFile = os.path.join(ChangesDirectory, FileLocation)
                     copy(File, NewFile)
                     if Catalog and FileName.endswith(".blueprint"):
-                        CatalogBlueprint(CatalogsDirectory, FileName)
+                        CatalogBlueprint(FileName)
             HashChecking.update_to(1, desc=f"{FileName:<64}")
-        SaveHashes(TroveDirectory, HashCache)
+    OriginalCatalog = os.path.join(TroveDirectory, "catalog")
+    shutil.copytree(OriginalCatalog, CatalogsDirectory, dirs_exist_ok=True)
+    shutil.rmtree(OriginalCatalog)
     print(f"Changes logged into \"{ChangesDirectory}\"")
 
 # Extraction
@@ -211,8 +213,6 @@ async def ExtractArchives():
         if _break:
             break
         await sleep(5)
-    # Ensure Hashes are properly saved
-    SaveHashes(TroveDirectory, HashCache)
 
 # Ensure user wants to proceed to give cancellation room
 if input("Do you wish to proceed with this extraction? Y | N\n").lower() not in ["y", "yes"]:
@@ -239,6 +239,7 @@ async def main():
         print("Do you want to create PNG previews of the changed blueprints? Y | N")
         print(" - This process can be time and resource consuming")
         print(" - This will not run if there's no changes tracked yet")
+        print(" - This will delete all files in `catalog` folder")
         CreatePreviews = input().lower() in ["y", "yes"]
     PrepareDirectory(TrackChanges, CreatePreviews)
     # Setup Hash logging for first run
@@ -256,6 +257,7 @@ async def main():
             await GetExtractedFileHashes()
             print("Current file state recorded for future change logging.")
     # Ensure directory doesn't get filled with backup hash logs
+    SaveHashes(TroveDirectory, HashCache)
     if HashBackupFile:
         os.remove(os.path.join(TroveDirectory, HashBackupFile))
 
