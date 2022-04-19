@@ -162,9 +162,10 @@ def CheckExtractedFileHashes(Catalog=False):
                     if Catalog and FileName.endswith(".blueprint"):
                         CatalogBlueprint(FileName)
             HashChecking.update_to(1, desc=f"{FileName:<64}")
-    OriginalCatalog = os.path.join(TroveDirectory, "catalog")
-    shutil.copytree(OriginalCatalog, CatalogsDirectory, dirs_exist_ok=True)
-    shutil.rmtree(OriginalCatalog, ignore_errors=True)
+    if Catalog:
+        OriginalCatalog = os.path.join(TroveDirectory, "catalog")
+        shutil.copytree(OriginalCatalog, CatalogsDirectory, dirs_exist_ok=True)
+        shutil.rmtree(OriginalCatalog, ignore_errors=True)
     print(f"Changes logged into \"{ChangesDirectory}\"")
 
 # Extraction
