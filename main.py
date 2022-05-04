@@ -1,11 +1,11 @@
 import os
-import re
 import shutil
 import subprocess
 import sys
 from asyncio import create_task, run, sleep
 from datetime import datetime
 from shutil import copy
+from pathlib import Path
 
 from psutil import Process
 
@@ -41,7 +41,7 @@ ArchiveFolders = list(FindTroveArchiveFolders(TroveDirectory))
 print(f"Found {len(ArchiveFolders)} Archive indexes.")
 # This is a cache to avoid checking for changes on all directories
 ExtractedArchivePaths = []
-CatalogRegex = r"(?:[a-z0-9]+)(?:_(?!ui)[a-z]{1,2})?(?:_[0-9]{1,3})?\.blueprint"
+ToCatalog = []
 CataloguedFiles = []
 
 def SanityCheck():
@@ -60,7 +60,7 @@ def SanityCheck():
     return True
 
 # Helper
-def PrepareDirectory(Changes=False, Previews=False):
+def PrepareDirectory(Changes=False):
     """Ensure necessary folders are created"""
     if not os.path.isdir(ExtractedDirectory):
         CreateDirectory(ExtractedDirectory, True)
@@ -73,6 +73,18 @@ def GetTroveProcesses():
     for Child in Children:
         if Child.pid in StartedProcesses:
             yield Child.pid
+
+async def WaitSubprocessDeath():
+    while True:
+        _break = True
+        ChildrenProcesses = CurrentProcess.children(recursive=True)
+        for ChildProcess in ChildrenProcesses:
+            if ChildProcess.pid in StartedProcesses:
+                _break = False
+                break
+        if _break:
+            break
+        await sleep(5)
 
 def GetExtractedFiles(Directory):
     """A generator that outputs all files in a diretory"""
@@ -125,26 +137,23 @@ async def GetExtractedFileHashes():
 
 def CatalogBlueprint(File):
     """Open a Trove.exe subprocess to create blueprint previews"""
-    if (CatalogSum := re.sub(CatalogRegex, "", File, 0, re.MULTILINE)) not in CataloguedFiles:
+    if File not in CataloguedFiles:
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags = subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = 0
-        command = f"{TroveEXE} -tool catalog -filter \"{CatalogSum}\" -dimension \"256\""# -dir \"{Directory}\""
-        subprocess.run(
+        command = f"{TroveEXE} -tool catalog -filter \"{File}\" -dimension \"256\""# -dir \"{Directory}\""
+        CMDProcess = subprocess.Popen(
             command,
             cwd=TroveDirectory,
             startupinfo=startupinfo
         )
-        CataloguedFiles.append(CatalogSum)
+        CataloguedFiles.append(File)
+        StartedProcesses.append(CMDProcess.pid)
 
-def CheckExtractedFileHashes(Catalog=False):
+async def CheckExtractedFileHashes(Catalog=False):
     """Check new file hashes against stored ones"""
     ChangesDirectory = os.path.join(ChangedDirectory, datetime.now().strftime("%Y-%m-%d_%H-%M"))
     CreateDirectory(ChangesDirectory, True)
-    if Catalog:
-        CatalogsDirectory = os.path.join(ChangesDirectory, "catalog")
-        CreateDirectory(CatalogsDirectory, True)
-        shutil.rmtree(CatalogsDirectory, ignore_errors=True)
     print("Indexing extracted files...")
     ExtractedFiles = list(GetExtractedFiles(ExtractedDirectory))
     with Progress(total=len(ExtractedFiles)) as HashChecking:
@@ -159,14 +168,33 @@ def CheckExtractedFileHashes(Catalog=False):
                     CreateDirectory(os.path.join(ChangesDirectory, FilePath))
                     NewFile = os.path.join(ChangesDirectory, FileLocation)
                     copy(File, NewFile)
-                    if Catalog and FileName.endswith(".blueprint"):
-                        CatalogBlueprint(FileName)
+                    if FileName.endswith(".blueprint") and File not in ToCatalog:
+                        ToCatalog.append(Path(File).name)
             HashChecking.update_to(1, desc=f"{FileName:<64}")
-    if Catalog:
-        OriginalCatalog = os.path.join(TroveDirectory, "catalog")
-        shutil.copytree(OriginalCatalog, CatalogsDirectory, dirs_exist_ok=True)
-        shutil.rmtree(OriginalCatalog, ignore_errors=True)
     print(f"Changes logged into \"{ChangesDirectory}\"")
+    if Catalog:
+        print("Cataloging changed files...")
+        await CatalogChangedFiles(ChangesDirectory)
+
+# Cataloging
+async def CatalogChangedFiles(ChangesDirectory):
+    CatalogsDirectory = os.path.join(ChangesDirectory, "catalog")
+    CreateDirectory(CatalogsDirectory, True)
+    shutil.rmtree(CatalogsDirectory, ignore_errors=True)
+    with Progress(total=len(ToCatalog)) as Cataloguing:
+        for Blueprint in ToCatalog:
+            while len(list(GetTroveProcesses())) >= 30:
+                await sleep(2)
+            CatalogBlueprint(Blueprint)
+            Cataloguing.update_to(1, desc=f"{Blueprint.replace('.blueprint', ''):<64}")
+    print("Waiting Trove processes to finish creating catalogs...")
+    await WaitSubprocessDeath()
+    OriginalCatalog = os.path.join(TroveDirectory, "catalog")
+    def CopyCatalogFile(src, dst):
+        shutil.copy(src, dst.replace(".blueprint.png", ".png"))
+    shutil.copytree(OriginalCatalog, CatalogsDirectory, dirs_exist_ok=True, copy_function=CopyCatalogFile)
+    shutil.rmtree(OriginalCatalog, ignore_errors=True)
+    print("Changed files were successfully catalogued.")
 
 # Extraction
 def ExtractArchive(Archive, Output):
@@ -204,16 +232,7 @@ async def ExtractArchives():
             # Extract Archives if one is changed
             await ExtractArchiveFolder(ArchiveFolder)
     print("Waiting Trove processes to finish extracting the files...")
-    while True:
-        _break = True
-        ChildrenProcesses = CurrentProcess.children(recursive=True)
-        for ChildProcess in ChildrenProcesses:
-            if ChildProcess.pid in StartedProcesses:
-                _break = False
-                break
-        if _break:
-            break
-        await sleep(5)
+    await WaitSubprocessDeath()
 
 # Ensure user wants to proceed to give cancellation room
 if input("Do you wish to proceed with this extraction? Y | N\n").lower() not in ["y", "yes"]:
@@ -242,7 +261,7 @@ async def main():
         print(" - This will not run if there's no changes tracked yet")
         print(" - This will delete all files in `catalog` folder")
         CreatePreviews = input().lower() in ["y", "yes"]
-    PrepareDirectory(TrackChanges, CreatePreviews)
+    PrepareDirectory(TrackChanges)
     # Setup Hash logging for first run
     if TrackChanges:
         if not HashCache.get("Files"):
@@ -253,7 +272,7 @@ async def main():
     # Look for changes and move them to the assigned folder
     if TrackChanges:
         if HashCache.get("Files"):
-            CheckExtractedFileHashes(CreatePreviews)
+            await CheckExtractedFileHashes(CreatePreviews)
         else:
             await GetExtractedFileHashes()
             print("Current file state recorded for future change logging.")
