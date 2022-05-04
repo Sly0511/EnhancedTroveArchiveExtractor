@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -19,10 +20,12 @@ Welcome to Enhanced Trove Archive Extractor
 - This tool extracts all game files it finds in current working directory
 - The more files and folders you have the slower this process becomes
 - The program will by default ignore all directories with ´extracted´ in their name
-- This tool will create a file called `EAEHashLog.json` to store file states and avoid re extracting unchanged files (speeds up extractions of updates)
+- This tool will create a file called `EAEHashLog.json` to store file states and avoid re extracting unchanged files (speeds up extractions of following updates)
 """
 )
 
+# Get Processor Information
+CPUCount = os.cpu_count()
 # Process Management
 CurrentProcess = Process()
 StartedProcesses = []
@@ -104,6 +107,8 @@ def CutDirectory(Path, CutPath):
 async def SetHashFile(File, Progress):
     """Helps with first file hash log"""
     FilePathName = CutDirectory(File, ExtractedDirectory)
+    FileName = os.path.basename(FilePathName)
+    Progress.update_to(1, desc=f"{FileName:<64}")
     if HashCache["Files"].get(FilePathName) is None:
         while True:
             try:
@@ -113,8 +118,6 @@ async def SetHashFile(File, Progress):
                 ...
             except FileNotFoundError:
                 break
-    FileName = os.path.basename(FilePathName)
-    Progress.update_to(1, desc=f"{FileName:<64}")
 
 async def GetExtractedFileHashes():
     """Generate first file hash log"""
@@ -162,6 +165,7 @@ async def CheckExtractedFileHashes(Catalog=False):
             FileLocation = CutDirectory(File, ExtractedDirectory)
             FileName = os.path.basename(FileLocation)
             FilePath = os.path.dirname(FileLocation)
+            HashChecking.update_to(1, desc=f"{FileName:<64}")
             if not ExtractedArchivePaths or FilePath in ExtractedArchivePaths:
                 if (OldHash := HashCache["Files"].get(FileLocation)) is None or FileHash != OldHash:
                     HashCache["Files"][FileLocation] = FileHash
@@ -169,10 +173,14 @@ async def CheckExtractedFileHashes(Catalog=False):
                     NewFile = os.path.join(ChangesDirectory, FileLocation)
                     copy(File, NewFile)
                     if FileName.endswith(".blueprint") and File not in ToCatalog:
-                        ToCatalog.append(Path(File).name)
-            HashChecking.update_to(1, desc=f"{FileName:<64}")
+                        BlueprintName = re.sub("(?:\[.*\])?\.blueprint", "", Path(File).name)
+                        if len(BlueprintName.split("_")) >= 5:
+                            ToCatalog.append(re.match("^.*_", BlueprintName).group(0))
+                        else:
+                            ToCatalog.append(BlueprintName)
     print(f"Changes logged into \"{ChangesDirectory}\"")
     if Catalog:
+        print(f"Processor with {CPUCount} logical cores detected, cataloguing will be tuned using this information")
         print("Cataloging changed files...")
         await CatalogChangedFiles(ChangesDirectory)
 
@@ -181,12 +189,13 @@ async def CatalogChangedFiles(ChangesDirectory):
     CatalogsDirectory = os.path.join(ChangesDirectory, "catalog")
     CreateDirectory(CatalogsDirectory, True)
     shutil.rmtree(CatalogsDirectory, ignore_errors=True)
-    with Progress(total=len(ToCatalog)) as Cataloguing:
-        for Blueprint in ToCatalog:
-            while len(list(GetTroveProcesses())) >= 30:
+    BPToCatalog = list(set(ToCatalog))
+    with Progress(total=len(BPToCatalog)) as Cataloguing:
+        for Blueprint in BPToCatalog:
+            Cataloguing.update_to(1, desc=f"{Blueprint.replace('.blueprint', ''):<64}")
+            while len(list(GetTroveProcesses())) >= CPUCount-2:
                 await sleep(2)
             CatalogBlueprint(Blueprint)
-            Cataloguing.update_to(1, desc=f"{Blueprint.replace('.blueprint', ''):<64}")
     print("Waiting Trove processes to finish creating catalogs...")
     await WaitSubprocessDeath()
     OriginalCatalog = os.path.join(TroveDirectory, "catalog")
@@ -225,8 +234,7 @@ async def ExtractArchiveFolder(ArchiveFolder):
 async def ExtractArchives():
     """Setup files for extraction through the use of asynchronous methods to speed up process"""
     print("Extracting changed archives...")
-    with Progress() as ExtractionProgress:
-        ExtractionProgress.update_to(0, total=len(ArchiveFolders))
+    with Progress(total=len(ArchiveFolders)) as ExtractionProgress:
         for ArchiveFolder in ArchiveFolders:
             ExtractionProgress.update_to(1, desc=f"{CutDirectory(ArchiveFolder, TroveDirectory):<64}")
             # Extract Archives if one is changed
