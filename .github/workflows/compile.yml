@@ -19,7 +19,7 @@ jobs:
         run: python -m pip install pyinstaller
 
       - name: Compile code into EXE
-        run: pyinstaller --onefile main.py icon="icon.ico"
+        run: pyinstaller --onefile main.py icon="logo.ico"
         
       - name: Move Files
         run: move dist/main.exe EnhancedArchiveExtractor.exe
