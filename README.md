@@ -6,7 +6,7 @@ Windows is quite annoying with it's anti malware software, it may slow down sign
 
 #### You can contact developer [here](https://trove.slynx.xyz/support) [Sly#0511]
 
-### [Download Executable Here](https://github.com/Sly0511/EnhancedTroveArchiveExtractor/releases/tag/1.0)
+### [Download Executable Here](https://github.com/Sly0511/EnhancedTroveArchiveExtractor/releases/latest)
 
 ## Why use this tool?
  - This tool enabled faster extractions than TroveTools.net and average bat file, how?
